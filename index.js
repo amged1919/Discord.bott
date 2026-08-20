@@ -3,7 +3,6 @@ require("dotenv").config();
 const {
   Client,
   GatewayIntentBits,
-  Partials,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -14,390 +13,85 @@ const {
   EmbedBuilder,
   ChannelType,
   StringSelectMenuBuilder,
-  UserSelectMenuBuilder,
 } = require("discord.js");
 
 const fs = require("fs");
 const path = require("path");
 
-// =========================
-// Environment
-// =========================
+// ======================================================
+// ENV
+// ======================================================
 
 const env = process.env;
 
-if (!env.DISCORD_TOKEN || !env.GUILD_ID) {
-  console.error("❌ ضع DISCORD_TOKEN و GUILD_ID في Railway Variables");
+if (!env.DISCORD_TOKEN) {
+  console.error("❌ DISCORD_TOKEN غير موجود في Variables");
   process.exit(1);
 }
 
-// =========================
-// Data
-// =========================
+if (!env.GUILD_ID) {
+  console.error("❌ GUILD_ID غير موجود في Variables");
+  process.exit(1);
+}
+
+// ======================================================
+// DATA
+// ======================================================
 
 const dataDir = path.join(__dirname, "data");
+const productsFile = path.join(dataDir, "products.json");
 
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-const productsFile = path.join(dataDir, "products.json");
-const configFile = path.join(dataDir, "config.json");
-const statsFile = path.join(dataDir, "stats.json");
-
 if (!fs.existsSync(productsFile)) {
   fs.writeFileSync(productsFile, "[]", "utf8");
 }
 
-if (!fs.existsSync(configFile)) {
-  fs.writeFileSync(configFile, "{}", "utf8");
-}
-
-if (!fs.existsSync(statsFile)) {
-  fs.writeFileSync(
-    statsFile,
-    JSON.stringify(
-      {
-        orders: 0,
-        sales: 0,
-        revenue: 0,
-      },
-      null,
-      2
-    ),
-    "utf8"
-  );
-}
-
-// =========================
-// JSON Functions
-// =========================
-
-function readJSON(file, fallback) {
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch (error) {
-    console.error("JSON Error:", error);
-    return fallback;
-  }
-}
-
-function writeJSON(file, data) {
-  fs.writeFileSync(
-    file,
-    JSON.stringify(data, null, 2),
-    "utf8"
-  );
-}
-
 function getProducts() {
-  return readJSON(productsFile, []);
+  try {
+    const data = fs.readFileSync(productsFile, "utf8");
+    return JSON.parse(data);
+  } catch (error) {
+    console.error("❌ خطأ في قراءة المنتجات:", error);
+    return [];
+  }
 }
 
 function saveProducts(products) {
-  writeJSON(productsFile, products);
+  try {
+    fs.writeFileSync(
+      productsFile,
+      JSON.stringify(products, null, 2),
+      "utf8"
+    );
+  } catch (error) {
+    console.error("❌ خطأ في حفظ المنتجات:", error);
+  }
 }
 
-function getConfig() {
-  const config = readJSON(configFile, {});
-
-  return {
-    staffRoleId:
-      config.staffRoleId ||
-      env.STAFF_ROLE_ID ||
-      "",
-
-    ticketCategoryId:
-      config.ticketCategoryId ||
-      env.TICKET_CATEGORY_ID ||
-      "",
-
-    ticketLogChannelId:
-      config.ticketLogChannelId ||
-      env.TICKET_LOG_CHANNEL_ID ||
-      "",
-
-    ordersCategoryId:
-      config.ordersCategoryId ||
-      env.ORDERS_CATEGORY_ID ||
-      "",
-
-    maintenance:
-      Boolean(config.maintenance),
-
-    storeName:
-      config.storeName ||
-      env.STORE_NAME ||
-      "Soork Store",
-
-    rajhiBankName:
-      config.rajhiBankName ||
-      env.RAJHI_BANK_NAME ||
-      "مصرف الراجحي",
-
-    rajhiAccountName:
-      config.rajhiAccountName ||
-      env.RAJHI_ACCOUNT_NAME ||
-      "غير مضبوط",
-
-    rajhiIban:
-      config.rajhiIban ||
-      env.RAJHI_IBAN ||
-      "غير مضبوط",
-  };
-}
-
-function saveConfig(config) {
-  writeJSON(configFile, config);
-}
-
-function getStats() {
-  return readJSON(statsFile, {
-    orders: 0,
-    sales: 0,
-    revenue: 0,
-  });
-}
-
-function saveStats(stats) {
-  writeJSON(statsFile, stats);
-}
-
-// =========================
-// Client
-// =========================
+// ======================================================
+// CLIENT
+// ======================================================
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-  ],
-  partials: [
-    Partials.Channel,
-    Partials.Message,
-  ],
+  intents: [GatewayIntentBits.Guilds],
 });
 
-// =========================
-// Permissions
-// =========================
-
-function isStaff(interaction) {
-  if (!interaction.member) return false;
-
-  const config = getConfig();
-
-  if (
-    config.staffRoleId &&
-    interaction.member.roles?.cache?.has(
-      config.staffRoleId
-    )
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-function isAdmin(interaction) {
-  if (
-    interaction.memberPermissions?.has(
-      PermissionFlagsBits.ManageGuild
-    )
-  ) {
-    return true;
-  }
-
-  return isStaff(interaction);
-}
-
-// =========================
-// Store
-// =========================
-
-function storeEmbed() {
-  const config = getConfig();
-
-  return new EmbedBuilder()
-    .setTitle(`🛒 ${config.storeName}`)
-    .setDescription(
-      config.maintenance
-        ? "🔧 **المتجر في وضع الصيانة حاليًا.**"
-        : "اختر المنتج من القائمة لفتح طلب خاص.\n\n" +
-          "بعد إنشاء الطلب ستظهر لك بيانات تحويل الراجحي، " +
-          "ثم ترفع إثبات الدفع.\n\n" +
-          "⚠️ لا يعتبر الطلب مدفوعًا حتى يتم تأكيده من الإدارة."
-    )
-    .setFooter({
-      text: "Soork Store • Payment & Orders",
-    });
-}
-
-function productMenu() {
-  const products = getProducts()
-    .filter(
-      product => Number(product.stock) > 0
-    )
-    .slice(0, 25);
-
-  const menu =
-    new StringSelectMenuBuilder()
-      .setCustomId("select_product")
-      .setPlaceholder("🛒 اختر المنتج");
-
-  if (!products.length) {
-    menu.addOptions([
-      {
-        label: "لا توجد منتجات متوفرة",
-        description: "لا يوجد مخزون حاليًا",
-        value: "none",
-      },
-    ]);
-  } else {
-    menu.addOptions(
-      products.map(product => ({
-        label:
-          `${product.name} - ${product.price} ريال`
-            .slice(0, 100),
-
-        description:
-          String(
-            product.description ||
-              "بدون وصف"
-          ).slice(0, 100),
-
-        value: product.id,
-      }))
-    );
-  }
-
-  return menu;
-}
-
-// =========================
-// Payment
-// =========================
-
-function paymentEmbed(product) {
-  const config = getConfig();
-
-  return new EmbedBuilder()
-    .setTitle("💳 طريقة الدفع — تحويل الراجحي")
-    .setDescription(
-      `**البنك:** ${config.rajhiBankName}\n` +
-      `**اسم صاحب الحساب:** ${config.rajhiAccountName}\n` +
-      `**الآيبان:** \`${config.rajhiIban}\`\n` +
-      `**المبلغ المطلوب:** **${product.price} ريال**\n\n` +
-      "بعد التحويل ارفع صورة أو ملف إثبات التحويل في نفس الطلب.\n\n" +
-      "⚠️ لا يعتبر الطلب مدفوعًا حتى يتم تأكيده من الإدارة."
-    )
-    .setFooter({
-      text: "Soork Store",
-    });
-}
-
-// =========================
-// Order Buttons
-// =========================
-
-function orderButtons() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("proof")
-      .setLabel("إرسال إثبات الدفع")
-      .setEmoji("📤")
-      .setStyle(ButtonStyle.Primary),
-
-    new ButtonBuilder()
-      .setCustomId("approve")
-      .setLabel("تأكيد الدفع")
-      .setEmoji("✅")
-      .setStyle(ButtonStyle.Success),
-
-    new ButtonBuilder()
-      .setCustomId("reject")
-      .setLabel("رفض الإثبات")
-      .setEmoji("❌")
-      .setStyle(ButtonStyle.Danger),
-
-    new ButtonBuilder()
-      .setCustomId("close_order")
-      .setLabel("إغلاق الطلب")
-      .setEmoji("🔒")
-      .setStyle(ButtonStyle.Secondary)
-  );
-}
-
-// =========================
-// Ticket Panel
-// =========================
-
-function ticketPanel() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("ticket_buy")
-      .setLabel("شراء")
-      .setEmoji("🛒")
-      .setStyle(ButtonStyle.Success),
-
-    new ButtonBuilder()
-      .setCustomId("ticket_payment")
-      .setLabel("دفع")
-      .setEmoji("💳")
-      .setStyle(ButtonStyle.Primary),
-
-    new ButtonBuilder()
-      .setCustomId("ticket_support")
-      .setLabel("دعم فني")
-      .setEmoji("🛠️")
-      .setStyle(ButtonStyle.Secondary),
-
-    new ButtonBuilder()
-      .setCustomId("ticket_question")
-      .setLabel("استفسار")
-      .setEmoji("❓")
-      .setStyle(ButtonStyle.Secondary)
-  );
-}
-
-// =========================
-// Ticket Buttons
-// =========================
-
-function ticketButtons() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("ticket_close")
-      .setLabel("إغلاق التكت")
-      .setEmoji("🔒")
-      .setStyle(ButtonStyle.Danger),
-
-    new ButtonBuilder()
-      .setCustomId("ticket_add")
-      .setLabel("إضافة عضو")
-      .setEmoji("➕")
-      .setStyle(ButtonStyle.Secondary),
-
-    new ButtonBuilder()
-      .setCustomId("ticket_remove")
-      .setLabel("إزالة عضو")
-      .setEmoji("➖")
-      .setStyle(ButtonStyle.Secondary)
-  );
-}
-
-// =========================
-// Slash Commands
-// =========================
+// ======================================================
+// COMMANDS
+// ======================================================
 
 const commands = [
-  new SlashCommandBuilder()
-    .setName("store")
-    .setDescription("عرض المتجر"),
+
+  // =========================
+  // STORE
+  // =========================
 
   new SlashCommandBuilder()
-    .setName("products")
-    .setDescription("عرض المنتجات"),
+    .setName("store")
+    .setDescription("عرض متجر Soork Store"),
 
   new SlashCommandBuilder()
     .setName("setup")
@@ -405,6 +99,14 @@ const commands = [
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageGuild
     ),
+
+  // =========================
+  // PRODUCTS
+  // =========================
+
+  new SlashCommandBuilder()
+    .setName("products")
+    .setDescription("عرض المنتجات"),
 
   new SlashCommandBuilder()
     .setName("addproduct")
@@ -421,21 +123,22 @@ const commands = [
     .addNumberOption(option =>
       option
         .setName("price")
-        .setDescription("السعر")
-        .setMinValue(0)
+        .setDescription("السعر بالريال")
         .setRequired(true)
+        .setMinValue(0)
     )
     .addIntegerOption(option =>
       option
         .setName("stock")
-        .setDescription("المخزون")
-        .setMinValue(0)
+        .setDescription("عدد المنتجات")
         .setRequired(true)
+        .setMinValue(0)
     )
     .addStringOption(option =>
       option
         .setName("description")
         .setDescription("وصف المنتج")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
@@ -467,126 +170,218 @@ const commands = [
       option
         .setName("name")
         .setDescription("الاسم الجديد")
+        .setRequired(false)
     )
     .addNumberOption(option =>
       option
         .setName("price")
         .setDescription("السعر الجديد")
+        .setRequired(false)
         .setMinValue(0)
     )
     .addIntegerOption(option =>
       option
         .setName("stock")
         .setDescription("المخزون الجديد")
+        .setRequired(false)
         .setMinValue(0)
     )
     .addStringOption(option =>
       option
         .setName("description")
         .setDescription("الوصف الجديد")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("stock")
-    .setDescription("عرض المخزون")
+    .setDescription("عرض مخزون المتجر")
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageGuild
     ),
 
-  new SlashCommandBuilder()
-    .setName("stats")
-    .setDescription("إحصائيات المتجر")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ManageGuild
-    ),
-
-  new SlashCommandBuilder()
-    .setName("maintenance")
-    .setDescription("تشغيل أو إيقاف الصيانة")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ManageGuild
-    )
-    .addBooleanOption(option =>
-      option
-        .setName("enabled")
-        .setDescription("تشغيل الصيانة؟")
-        .setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("setstaff")
-    .setDescription("تحديد رتبة إدارة المتجر")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ManageGuild
-    )
-    .addRoleOption(option =>
-      option
-        .setName("role")
-        .setDescription("رتبة الإدارة")
-        .setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("setpayment")
-    .setDescription("تعديل بيانات الدفع")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ManageGuild
-    )
-    .addStringOption(option =>
-      option
-        .setName("account_name")
-        .setDescription("اسم صاحب الحساب")
-    )
-    .addStringOption(option =>
-      option
-        .setName("iban")
-        .setDescription("الآيبان")
-    )
-    .addStringOption(option =>
-      option
-        .setName("bank_name")
-        .setDescription("اسم البنك")
-    ),
-
-  new SlashCommandBuilder()
-    .setName("ticket")
-    .setDescription("إرسال لوحة التكت")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ManageGuild
-    ),
-
-  new SlashCommandBuilder()
-    .setName("setticket")
-    .setDescription("إعداد نظام التكت")
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ManageGuild
-    )
-    .addChannelOption(option =>
-      option
-        .setName("category")
-        .setDescription("تصنيف التكت")
-        .addChannelTypes(
-          ChannelType.GuildCategory
-        )
-        .setRequired(true)
-    )
-    .addChannelOption(option =>
-      option
-        .setName("logs")
-        .setDescription("قناة لوق التكت")
-        .addChannelTypes(
-          ChannelType.GuildText
-        )
-        .setRequired(true)
-    ),
 ].map(command => command.toJSON());
 
-// =========================
-// Ready
-// =========================
+// ======================================================
+// STAFF
+// ======================================================
+
+function isStaff(interaction) {
+
+  if (!interaction.member) {
+    return false;
+  }
+
+  // صاحب السيرفر / إدارة السيرفر
+  if (
+    interaction.member.permissions &&
+    interaction.member.permissions.has(
+      PermissionFlagsBits.ManageGuild
+    )
+  ) {
+    return true;
+  }
+
+  // رتبة الإدارة
+  if (
+    env.STAFF_ROLE_ID &&
+    interaction.member.roles &&
+    interaction.member.roles.cache &&
+    interaction.member.roles.cache.has(env.STAFF_ROLE_ID)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+// ======================================================
+// STORE EMBED
+// ======================================================
+
+function storeEmbed() {
+
+  return new EmbedBuilder()
+    .setTitle(
+      `🛒 ${env.STORE_NAME || "Soork Store"}`
+    )
+    .setDescription(
+      "اختر المنتج من القائمة بالأسفل.\n\n" +
+      "🎫 سيتم إنشاء تكت خاص بك.\n" +
+      "💳 ستظهر لك بيانات تحويل الراجحي داخل التكت.\n" +
+      "📤 بعد التحويل أرسل إثبات الدفع.\n\n" +
+      "⚠️ لا يتم اعتبار الطلب مدفوعًا حتى يتم تأكيده من الإدارة."
+    )
+    .setFooter({
+      text: "Soork Store",
+    });
+}
+
+// ======================================================
+// PRODUCT MENU
+// ======================================================
+
+function productMenu() {
+
+  const products = getProducts()
+    .filter(product => Number(product.stock) > 0)
+    .slice(0, 25);
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId("select_product")
+      .setPlaceholder("🛒 اختر المنتج");
+
+  if (products.length === 0) {
+
+    menu.addOptions({
+      label: "لا توجد منتجات متوفرة",
+      description: "لا يوجد مخزون حاليًا",
+      value: "none",
+    });
+
+  } else {
+
+    menu.addOptions(
+      products.map(product => ({
+        label: `${product.name} - ${product.price} ريال`.slice(
+          0,
+          100
+        ),
+        description: String(
+          product.description || "بدون وصف"
+        ).slice(0, 100),
+        value: product.id,
+      }))
+    );
+
+  }
+
+  return menu;
+}
+
+// ======================================================
+// PAYMENT EMBED
+// ======================================================
+
+function paymentEmbed(product) {
+
+  return new EmbedBuilder()
+    .setTitle("💳 بيانات الدفع")
+    .setDescription(
+
+      `**🏦 البنك:** ${
+        env.RAJHI_BANK_NAME || "مصرف الراجحي"
+      }\n\n` +
+
+      `**👤 اسم صاحب الحساب:** ${
+        env.RAJHI_ACCOUNT_NAME || "غير مضبوط"
+      }\n\n` +
+
+      `**💳 الآيبان:**\n` +
+      `\`${env.RAJHI_IBAN || "غير مضبوط"}\`\n\n` +
+
+      `**💰 المبلغ:** ${product.price} ريال\n\n` +
+
+      "بعد التحويل اضغط زر **📤 إثبات الدفع** " +
+      "ثم أرسل صورة أو ملف التحويل داخل التكت.\n\n" +
+
+      "⚠️ لا ترسل أي معلومات بنكية غير المطلوبة.\n" +
+      "⚠️ الطلب لا يعتبر مدفوعًا حتى يتم تأكيده من الإدارة."
+
+    )
+    .setFooter({
+      text: "Soork Store • Al Rajhi",
+    });
+}
+
+// ======================================================
+// ORDER BUTTONS
+// ======================================================
+
+function orderButtons() {
+
+  return new ActionRowBuilder().addComponents(
+
+    new ButtonBuilder()
+      .setCustomId("proof")
+      .setLabel("إثبات الدفع")
+      .setEmoji("📤")
+      .setStyle(ButtonStyle.Primary),
+
+    new ButtonBuilder()
+      .setCustomId("approve")
+      .setLabel("تأكيد الدفع")
+      .setEmoji("✅")
+      .setStyle(ButtonStyle.Success),
+
+    new ButtonBuilder()
+      .setCustomId("reject")
+      .setLabel("رفض الإثبات")
+      .setEmoji("❌")
+      .setStyle(ButtonStyle.Danger),
+
+    new ButtonBuilder()
+      .setCustomId("close")
+      .setLabel("إغلاق التكت")
+      .setEmoji("🔒")
+      .setStyle(ButtonStyle.Secondary)
+
+  );
+}
+
+// ======================================================
+// READY
+// ======================================================
 
 client.once("ready", async () => {
+
+  console.log("================================");
+  console.log(`🤖 Bot: ${client.user.tag}`);
+  console.log("================================");
+
   try {
+
     const rest =
       new REST({ version: "10" })
         .setToken(env.DISCORD_TOKEN);
@@ -601,330 +396,208 @@ client.once("ready", async () => {
       }
     );
 
-    console.log(
-      `✅ Logged in as ${client.user.tag}`
-    );
+    console.log("✅ Slash commands registered.");
 
-    console.log(
-      "✅ Commands registered successfully."
-    );
   } catch (error) {
+
     console.error(
       "❌ Command registration error:",
       error
     );
+
   }
+
 });
 
-// =========================
-// Create Ticket
-// =========================
-
-async function createTicket(
-  interaction,
-  type
-) {
-  const config = getConfig();
-
-  if (!config.ticketCategoryId) {
-    return interaction.reply({
-      content:
-        "❌ لم يتم إعداد تصنيف التكت.\nاستخدم `/setticket` أولًا.",
-      ephemeral: true,
-    });
-  }
-
-  const existing =
-    interaction.guild.channels.cache.find(
-      channel =>
-        channel.type === ChannelType.GuildText &&
-        channel.parentId ===
-          config.ticketCategoryId &&
-        channel.topic ===
-          `ticket-owner:${interaction.user.id}`
-    );
-
-  if (existing) {
-    return interaction.reply({
-      content:
-        `❌ لديك تكت مفتوح بالفعل: ${existing}`,
-      ephemeral: true,
-    });
-  }
-
-  const typeNames = {
-    buy: "شراء",
-    payment: "دفع",
-    support: "دعم فني",
-    question: "استفسار",
-  };
-
-  const overwrites = [
-    {
-      id: interaction.guild.roles.everyone.id,
-      deny: [
-        PermissionFlagsBits.ViewChannel,
-      ],
-    },
-
-    {
-      id: interaction.user.id,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ReadMessageHistory,
-        PermissionFlagsBits.AttachFiles,
-      ],
-    },
-  ];
-
-  if (config.staffRoleId) {
-    overwrites.push({
-      id: config.staffRoleId,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ReadMessageHistory,
-        PermissionFlagsBits.ManageChannels,
-      ],
-    });
-  }
-
-  const channel =
-    await interaction.guild.channels.create({
-      name:
-        `ticket-${type}-${interaction.user.username
-          .toLowerCase()
-          .replace(/[^a-z0-9-]/g, "")
-          .slice(0, 15) || "user"}`,
-
-      type: ChannelType.GuildText,
-
-      parent: config.ticketCategoryId,
-
-      topic:
-        `ticket-owner:${interaction.user.id}`,
-
-      permissionOverwrites: overwrites,
-    });
-
-  const embed =
-    new EmbedBuilder()
-      .setTitle(
-        `🎫 تكت ${typeNames[type]}`
-      )
-      .setDescription(
-        `أهلًا <@${interaction.user.id}> 👋\n\n` +
-        "اكتب طلبك هنا وسيتم الرد عليك من الإدارة.\n\n" +
-        "عند الانتهاء اضغط **إغلاق التكت**."
-      )
-      .setFooter({
-        text: "Soork Store • Tickets",
-      });
-
-  await channel.send({
-    content:
-      `<@${interaction.user.id}>` +
-      (config.staffRoleId
-        ? ` <@&${config.staffRoleId}>`
-        : ""),
-
-    embeds: [embed],
-
-    components: [
-      ticketButtons(),
-    ],
-  });
-
-  await interaction.reply({
-    content:
-      `✅ تم فتح التكت بنجاح: ${channel}`,
-    ephemeral: true,
-  });
-}
-
-// =========================
-// Interaction Handler
-// =========================
+// ======================================================
+// INTERACTIONS
+// ======================================================
 
 client.on(
   "interactionCreate",
   async interaction => {
+
     try {
-      // =========================
-      // Slash Commands
-      // =========================
 
-      if (
-        interaction.isChatInputCommand()
-      ) {
-        // STORE
-        if (
-          interaction.commandName ===
-          "store"
-        ) {
-          if (
-            getConfig().maintenance &&
-            !isAdmin(interaction)
-          ) {
-            return interaction.reply({
-              content:
-                "🔧 المتجر في وضع الصيانة.",
-              ephemeral: true,
-            });
-          }
+      // ==================================================
+      // SLASH COMMANDS
+      // ==================================================
 
-          return interaction.reply({
+      if (interaction.isChatInputCommand()) {
+
+        // ================================================
+        // /store
+        // ================================================
+
+        if (interaction.commandName === "store") {
+
+          await interaction.reply({
             embeds: [storeEmbed()],
             components: [
-              new ActionRowBuilder().addComponents(
-                productMenu()
-              ),
+              new ActionRowBuilder()
+                .addComponents(productMenu()),
             ],
           });
+
+          return;
         }
 
-        // SETUP
-        if (
-          interaction.commandName ===
-          "setup"
-        ) {
-          if (!isAdmin(interaction)) {
-            return interaction.reply({
-              content:
-                "❌ هذا الأمر للإدارة فقط.",
+        // ================================================
+        // /setup
+        // ================================================
+
+        if (interaction.commandName === "setup") {
+
+          if (!isStaff(interaction)) {
+
+            await interaction.reply({
+              content: "❌ هذا الأمر للإدارة فقط.",
               ephemeral: true,
             });
+
+            return;
           }
 
-          return interaction.reply({
+          await interaction.reply({
             embeds: [storeEmbed()],
             components: [
-              new ActionRowBuilder().addComponents(
-                productMenu()
-              ),
+              new ActionRowBuilder()
+                .addComponents(productMenu()),
             ],
           });
+
+          return;
         }
 
-        // PRODUCTS
-        if (
-          interaction.commandName ===
-          "products"
-        ) {
-          const products =
-            getProducts();
+        // ================================================
+        // /products
+        // ================================================
 
-          if (!products.length) {
-            return interaction.reply({
-              content:
-                "📦 لا توجد منتجات حاليًا.",
+        if (interaction.commandName === "products") {
+
+          const products = getProducts();
+
+          if (products.length === 0) {
+
+            await interaction.reply({
+              content: "📦 لا توجد منتجات.",
               ephemeral: true,
             });
+
+            return;
           }
 
-          const text =
-            products
-              .map(
-                product =>
-                  `**${product.name}**\n` +
-                  `🆔 \`${product.id}\`\n` +
-                  `💰 ${product.price} ريال\n` +
-                  `📦 المخزون: ${product.stock}\n` +
-                  `📝 ${
-                    product.description ||
-                    "بدون وصف"
-                  }`
-              )
-              .join("\n\n");
+          let text = "🛒 **منتجات Soork Store**\n\n";
 
-          return interaction.reply({
+          for (const product of products) {
+
+            text +=
+              `📦 **${product.name}**\n` +
+              `🆔 \`${product.id}\`\n` +
+              `💰 السعر: **${product.price} ريال**\n` +
+              `📊 المخزون: **${product.stock}**\n` +
+              `📝 ${product.description || "بدون وصف"}\n\n`;
+
+          }
+
+          await interaction.reply({
             content: text.slice(0, 4000),
             ephemeral: true,
           });
+
+          return;
         }
 
-        // ADD PRODUCT
+        // ================================================
+        // /addproduct
+        // ================================================
+
         if (
           interaction.commandName ===
           "addproduct"
         ) {
-          if (!isAdmin(interaction)) {
-            return interaction.reply({
-              content:
-                "❌ هذا الأمر للإدارة فقط.",
+
+          if (!isStaff(interaction)) {
+
+            await interaction.reply({
+              content: "❌ هذا الأمر للإدارة فقط.",
               ephemeral: true,
             });
+
+            return;
           }
 
-          const products =
-            getProducts();
+          const name =
+            interaction.options.getString("name");
+
+          const price =
+            interaction.options.getNumber("price");
+
+          const stock =
+            interaction.options.getInteger("stock");
+
+          const description =
+            interaction.options.getString(
+              "description"
+            ) || "بدون وصف";
+
+          const products = getProducts();
+
+          const id =
+            Date.now().toString(36) +
+            Math.random()
+              .toString(36)
+              .substring(2, 7);
 
           const product = {
-            id:
-              `${Date.now().toString(36)}` +
-              `${Math.random()
-                .toString(36)
-                .slice(2, 6)}`,
-
-            name:
-              interaction.options.getString(
-                "name"
-              ),
-
-            price:
-              interaction.options.getNumber(
-                "price"
-              ),
-
-            stock:
-              interaction.options.getInteger(
-                "stock"
-              ),
-
-            description:
-              interaction.options.getString(
-                "description"
-              ) ||
-              "بدون وصف",
+            id,
+            name,
+            price,
+            stock,
+            description,
           };
 
           products.push(product);
 
           saveProducts(products);
 
-          return interaction.reply({
+          await interaction.reply({
             content:
-              `✅ تم إضافة المنتج.\n\n` +
-              `📦 ${product.name}\n` +
-              `💰 ${product.price} ريال\n` +
-              `📊 المخزون: ${product.stock}\n` +
-              `🆔 \`${product.id}\``,
-
+              "✅ **تم إضافة المنتج**\n\n" +
+              `📦 الاسم: **${name}**\n` +
+              `💰 السعر: **${price} ريال**\n` +
+              `📊 المخزون: **${stock}**\n` +
+              `📝 الوصف: **${description}**\n` +
+              `🆔 ID: \`${id}\``,
             ephemeral: true,
           });
+
+          return;
         }
 
-        // REMOVE PRODUCT
+        // ================================================
+        // /removeproduct
+        // ================================================
+
         if (
           interaction.commandName ===
           "removeproduct"
         ) {
-          if (!isAdmin(interaction)) {
-            return interaction.reply({
-              content:
-                "❌ هذا الأمر للإدارة فقط.",
+
+          if (!isStaff(interaction)) {
+
+            await interaction.reply({
+              content: "❌ هذا الأمر للإدارة فقط.",
               ephemeral: true,
             });
+
+            return;
           }
 
           const id =
-            interaction.options.getString(
-              "id"
-            );
+            interaction.options.getString("id");
 
-          const products =
-            getProducts();
+          const products = getProducts();
 
           const index =
             products.findIndex(
@@ -933,11 +606,14 @@ client.on(
             );
 
           if (index === -1) {
-            return interaction.reply({
+
+            await interaction.reply({
               content:
-                "❌ المنتج غير موجود.",
+                "❌ لم أجد منتج بهذا الـID.",
               ephemeral: true,
             });
+
+            return;
           }
 
           const removed =
@@ -947,46 +623,55 @@ client.on(
 
           saveProducts(products);
 
-          return interaction.reply({
+          await interaction.reply({
             content:
-              `🗑️ تم حذف المنتج **${removed.name}**.`,
+              "🗑️ **تم حذف المنتج**\n\n" +
+              `📦 المنتج: **${removed.name}**\n` +
+              `🆔 ID: \`${removed.id}\``,
             ephemeral: true,
           });
+
+          return;
         }
 
-        // EDIT PRODUCT
+        // ================================================
+        // /editproduct
+        // ================================================
+
         if (
           interaction.commandName ===
           "editproduct"
         ) {
-          if (!isAdmin(interaction)) {
-            return interaction.reply({
-              content:
-                "❌ هذا الأمر للإدارة فقط.",
+
+          if (!isStaff(interaction)) {
+
+            await interaction.reply({
+              content: "❌ هذا الأمر للإدارة فقط.",
               ephemeral: true,
             });
+
+            return;
           }
 
           const id =
-            interaction.options.getString(
-              "id"
-            );
+            interaction.options.getString("id");
 
-          const products =
-            getProducts();
+          const products = getProducts();
 
           const product =
             products.find(
-              item =>
-                item.id === id
+              item => item.id === id
             );
 
           if (!product) {
-            return interaction.reply({
+
+            await interaction.reply({
               content:
                 "❌ المنتج غير موجود.",
               ephemeral: true,
             });
+
+            return;
           }
 
           const name =
@@ -1015,386 +700,183 @@ client.on(
             stock === null &&
             description === null
           ) {
-            return interaction.reply({
+
+            await interaction.reply({
               content:
-                "❌ حدد شيء واحد على الأقل للتعديل.",
+                "❌ حدد الشيء الذي تريد تعديله.",
               ephemeral: true,
             });
+
+            return;
           }
 
-          if (name !== null)
+          if (name !== null) {
             product.name = name;
+          }
 
-          if (price !== null)
+          if (price !== null) {
             product.price = price;
+          }
 
-          if (stock !== null)
+          if (stock !== null) {
             product.stock = stock;
+          }
 
-          if (description !== null)
+          if (description !== null) {
             product.description =
               description;
+          }
 
           saveProducts(products);
 
-          return interaction.reply({
+          await interaction.reply({
             content:
-              `✅ تم تعديل المنتج.\n\n` +
-              `📦 ${product.name}\n` +
-              `💰 ${product.price} ريال\n` +
-              `📦 المخزون: ${product.stock}`,
-
+              "✅ **تم تعديل المنتج**\n\n" +
+              `📦 الاسم: **${product.name}**\n` +
+              `💰 السعر: **${product.price} ريال**\n` +
+              `📊 المخزون: **${product.stock}**\n` +
+              `📝 الوصف: **${product.description}**\n` +
+              `🆔 ID: \`${product.id}\``,
             ephemeral: true,
           });
+
+          return;
         }
 
-        // STOCK
+        // ================================================
+        // /stock
+        // ================================================
+
         if (
           interaction.commandName ===
           "stock"
         ) {
-          if (!isAdmin(interaction)) {
-            return interaction.reply({
-              content:
-                "❌ هذا الأمر للإدارة فقط.",
+
+          if (!isStaff(interaction)) {
+
+            await interaction.reply({
+              content: "❌ هذا الأمر للإدارة فقط.",
               ephemeral: true,
             });
+
+            return;
           }
 
-          const products =
-            getProducts();
+          const products = getProducts();
 
-          if (!products.length) {
-            return interaction.reply({
+          if (products.length === 0) {
+
+            await interaction.reply({
               content:
                 "📦 لا توجد منتجات.",
               ephemeral: true,
             });
+
+            return;
           }
 
-          const text =
-            products
-              .map(
-                product =>
-                  `📦 **${product.name}**\n` +
-                  `💰 ${product.price} ريال\n` +
-                  `📊 المخزون: ${product.stock}\n` +
-                  `🆔 \`${product.id}\``
-              )
-              .join("\n\n");
+          let text =
+            "📊 **مخزون المتجر**\n\n";
 
-          return interaction.reply({
-            content:
-              `📊 **مخزون المتجر**\n\n${text}`,
+          for (const product of products) {
+
+            text +=
+              `📦 **${product.name}**\n` +
+              `💰 ${product.price} ريال\n` +
+              `📊 المخزون: **${product.stock}**\n` +
+              `🆔 \`${product.id}\`\n\n`;
+
+          }
+
+          await interaction.reply({
+            content: text.slice(0, 4000),
             ephemeral: true,
           });
+
+          return;
         }
 
-        // STATS
-        if (
-          interaction.commandName ===
-          "stats"
-        ) {
-          if (!isAdmin(interaction)) {
-            return interaction.reply({
-              content:
-                "❌ هذا الأمر للإدارة فقط.",
-              ephemeral: true,
-            });
-          }
-
-          const stats =
-            getStats();
-
-          const embed =
-            new EmbedBuilder()
-              .setTitle(
-                "📊 إحصائيات المتجر"
-              )
-              .addFields(
-                {
-                  name: "🧾 الطلبات",
-                  value:
-                    String(
-                      stats.orders
-                    ),
-                  inline: true,
-                },
-                {
-                  name: "💰 المبيعات",
-                  value:
-                    String(
-                      stats.sales
-                    ),
-                  inline: true,
-                },
-                {
-                  name: "💵 الإيرادات",
-                  value:
-                    `${stats.revenue} ريال`,
-                  inline: true,
-                }
-              );
-
-          return interaction.reply({
-            embeds: [embed],
-            ephemeral: true,
-          });
-        }
-
-        // MAINTENANCE
-        if (
-          interaction.commandName ===
-          "maintenance"
-        ) {
-          if (!isAdmin(interaction)) {
-            return interaction.reply({
-              content:
-                "❌ هذا الأمر للإدارة فقط.",
-              ephemeral: true,
-            });
-          }
-
-          const config =
-            getConfig();
-
-          config.maintenance =
-            interaction.options.getBoolean(
-              "enabled"
-            );
-
-          saveConfig(config);
-
-          return interaction.reply({
-            content:
-              config.maintenance
-                ? "🔧 تم تشغيل وضع الصيانة."
-                : "✅ تم إيقاف وضع الصيانة.",
-
-            ephemeral: true,
-          });
-        }
-
-        // SET STAFF
-        if (
-          interaction.commandName ===
-          "setstaff"
-        ) {
-          if (
-            !interaction.memberPermissions?.has(
-              PermissionFlagsBits.ManageGuild
-            )
-          ) {
-            return interaction.reply({
-              content:
-                "❌ هذا الأمر للإدارة العليا فقط.",
-              ephemeral: true,
-            });
-          }
-
-          const role =
-            interaction.options.getRole(
-              "role"
-            );
-
-          const config =
-            getConfig();
-
-          config.staffRoleId =
-            role.id;
-
-          saveConfig(config);
-
-          return interaction.reply({
-            content:
-              `✅ تم تحديد رتبة الإدارة: ${role}`,
-            ephemeral: true,
-          });
-        }
-
-        // SET PAYMENT
-        if (
-          interaction.commandName ===
-          "setpayment"
-        ) {
-          if (
-            !interaction.memberPermissions?.has(
-              PermissionFlagsBits.ManageGuild
-            )
-          ) {
-            return interaction.reply({
-              content:
-                "❌ هذا الأمر للإدارة العليا فقط.",
-              ephemeral: true,
-            });
-          }
-
-          const config =
-            getConfig();
-
-          const accountName =
-            interaction.options.getString(
-              "account_name"
-            );
-
-          const iban =
-            interaction.options.getString(
-              "iban"
-            );
-
-          const bankName =
-            interaction.options.getString(
-              "bank_name"
-            );
-
-          if (accountName !== null)
-            config.rajhiAccountName =
-              accountName;
-
-          if (iban !== null)
-            config.rajhiIban =
-              iban;
-
-          if (bankName !== null)
-            config.rajhiBankName =
-              bankName;
-
-          saveConfig(config);
-
-          return interaction.reply({
-            content:
-              "✅ تم تحديث بيانات الدفع.",
-            ephemeral: true,
-          });
-        }
-
-        // TICKET
-        if (
-          interaction.commandName ===
-          "ticket"
-        ) {
-          if (!isAdmin(interaction)) {
-            return interaction.reply({
-              content:
-                "❌ هذا الأمر للإدارة فقط.",
-              ephemeral: true,
-            });
-          }
-
-          return interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setTitle(
-                  "🎫 نظام التذاكر"
-                )
-                .setDescription(
-                  "اختر نوع التكت المناسب لك:"
-                ),
-            ],
-
-            components: [
-              ticketPanel(),
-            ],
-          });
-        }
-
-        // SET TICKET
-        if (
-          interaction.commandName ===
-          "setticket"
-        ) {
-          if (
-            !interaction.memberPermissions?.has(
-              PermissionFlagsBits.ManageGuild
-            )
-          ) {
-            return interaction.reply({
-              content:
-                "❌ هذا الأمر للإدارة العليا فقط.",
-              ephemeral: true,
-            });
-          }
-
-          const config =
-            getConfig();
-
-          config.ticketCategoryId =
-            interaction.options.getChannel(
-              "category"
-            ).id;
-
-          config.ticketLogChannelId =
-            interaction.options.getChannel(
-              "logs"
-            ).id;
-
-          saveConfig(config);
-
-          return interaction.reply({
-            content:
-              "✅ تم حفظ إعدادات التكت.",
-            ephemeral: true,
-          });
-        }
+        return;
       }
 
-      // =========================
-      // Product Menu
-      // =========================
+      // ==================================================
+      // PRODUCT SELECT
+      // ==================================================
 
       if (
         interaction.isStringSelectMenu() &&
         interaction.customId ===
           "select_product"
       ) {
-        if (
-          interaction.values[0] ===
-          "none"
-        ) {
-          return interaction.reply({
+
+        const selectedId =
+          interaction.values[0];
+
+        if (selectedId === "none") {
+
+          await interaction.reply({
             content:
-              "❌ لا توجد منتجات.",
+              "❌ لا توجد منتجات متوفرة.",
             ephemeral: true,
           });
+
+          return;
         }
 
-        const products =
-          getProducts();
+        const products = getProducts();
 
         const product =
           products.find(
-            p =>
-              p.id ===
-              interaction.values[0]
+            item =>
+              item.id === selectedId
           );
 
         if (!product) {
-          return interaction.reply({
+
+          await interaction.reply({
             content:
               "❌ المنتج غير موجود.",
             ephemeral: true,
           });
+
+          return;
         }
 
-        if (
-          Number(product.stock) <=
-          0
-        ) {
-          return interaction.reply({
+        if (Number(product.stock) <= 0) {
+
+          await interaction.reply({
             content:
               "❌ المنتج نفد من المخزون.",
             ephemeral: true,
           });
+
+          return;
         }
 
         await interaction.deferReply({
           ephemeral: true,
         });
 
-        const config =
-          getConfig();
+        // ==============================================
+        // CHANNEL NAME
+        // ==============================================
+
+        const safeUsername =
+          interaction.user.username
+            .toLowerCase()
+            .replace(/[^a-z0-9-_]/g, "")
+            .slice(0, 18) ||
+          "customer";
+
+        const channelName =
+          `order-${safeUsername}`;
+
+        // ==============================================
+        // PERMISSIONS
+        // ==============================================
 
         const overwrites = [
+
           {
             id:
               interaction.guild.roles
@@ -1416,14 +898,15 @@ client.on(
               PermissionFlagsBits.AttachFiles,
             ],
           },
+
         ];
 
-        if (
-          config.staffRoleId
-        ) {
+        // رتبة الإدارة
+        if (env.STAFF_ROLE_ID) {
+
           overwrites.push({
-            id:
-              config.staffRoleId,
+
+            id: env.STAFF_ROLE_ID,
 
             allow: [
               PermissionFlagsBits.ViewChannel,
@@ -1431,55 +914,64 @@ client.on(
               PermissionFlagsBits.ReadMessageHistory,
               PermissionFlagsBits.ManageChannels,
             ],
+
           });
+
         }
 
+        // ==============================================
+        // CREATE TICKET
+        // ==============================================
+
         const channel =
-          await interaction.guild.channels.create(
-            {
-              name:
-                `order-${interaction.user.username
-                  .toLowerCase()
-                  .replace(
-                    /[^a-z0-9-]/g,
-                    ""
-                  )
-                  .slice(0, 18) ||
-                  "customer"`,
+          await interaction.guild.channels.create({
 
-              type:
-                ChannelType.GuildText,
+            name: channelName,
 
-              parent:
-                config.ordersCategoryId ||
-                null,
+            type:
+              ChannelType.GuildText,
 
-              topic:
-                `order-owner:${interaction.user.id};product:${product.id}`,
+            parent:
+              env.ORDERS_CATEGORY_ID ||
+              null,
 
-              permissionOverwrites:
-                overwrites,
-            }
-          );
+            permissionOverwrites:
+              overwrites,
+
+          });
+
+        // ==============================================
+        // ORDER EMBED
+        // ==============================================
 
         const orderEmbed =
           new EmbedBuilder()
-            .setTitle(
-              "🧾 طلب جديد"
-            )
+            .setTitle("🧾 طلب جديد")
             .setDescription(
-              `**العميل:** <@${interaction.user.id}>\n` +
-              `**المنتج:** ${product.name}\n` +
-              `**السعر:** ${product.price} ريال\n` +
-              `**الحالة:** 🟡 بانتظار الدفع`
-            );
+
+              `**👤 العميل:** <@${interaction.user.id}>\n` +
+              `**📦 المنتج:** ${product.name}\n` +
+              `**💰 السعر:** ${product.price} ريال\n` +
+              `**📊 المخزون:** ${product.stock}\n` +
+              `**🟡 الحالة:** بانتظار الدفع`
+
+            )
+            .setFooter({
+              text:
+                "Soork Store • Order",
+            });
+
+        // ==============================================
+        // SEND ORDER
+        // ==============================================
 
         await channel.send({
+
           content:
             `<@${interaction.user.id}>` +
             (
-              config.staffRoleId
-                ? ` <@&${config.staffRoleId}>`
+              env.STAFF_ROLE_ID
+                ? ` <@&${env.STAFF_ROLE_ID}>`
                 : ""
             ),
 
@@ -1491,314 +983,324 @@ client.on(
           components: [
             orderButtons(),
           ],
+
         });
 
-        const stats =
-          getStats();
+        await interaction.editReply({
 
-        stats.orders++;
-
-        saveStats(stats);
-
-        return interaction.editReply({
           content:
-            `✅ تم إنشاء الطلب: ${channel}`,
+            `✅ تم إنشاء التكت بنجاح.\n\n` +
+            `🎫 ${channel}`,
+
         });
+
+        return;
       }
 
-      // =========================
-      // Buttons
-      // =========================
+      // ==================================================
+      // BUTTONS
+      // ==================================================
 
-      if (
-        interaction.isButton()
-      ) {
-        // TICKET CREATE
+      if (interaction.isButton()) {
 
-        if (
-          [
-            "ticket_buy",
-            "ticket_payment",
-            "ticket_support",
-            "ticket_question",
-          ].includes(
-            interaction.customId
-          )
-        ) {
-          const typeMap = {
-            ticket_buy: "buy",
-            ticket_payment:
-              "payment",
-
-            ticket_support:
-              "support",
-
-            ticket_question:
-              "question",
-          };
-
-          return createTicket(
-            interaction,
-            typeMap[
-              interaction.customId
-            ]
-          );
-        }
-
+        // ================================================
         // PROOF
+        // ================================================
 
         if (
           interaction.customId ===
           "proof"
         ) {
-          return interaction.reply({
+
+          await interaction.reply({
+
             content:
-              "📤 ارفع الآن صورة أو ملف إثبات التحويل في هذه القناة.\n\n" +
-              "بعد رفع الإثبات انتظر تأكيد الإدارة.",
+              "📤 **ارفع إثبات التحويل هنا في التكت.**\n\n" +
+              "يمكنك إرسال صورة أو ملف التحويل مباشرة في هذه القناة.\n\n" +
+              "بعدها انتظر الإدارة لتأكيد الدفع.",
+
             ephemeral: true,
+
           });
+
+          return;
         }
 
-        // APPROVE / REJECT
+        // ================================================
+        // APPROVE
+        // ================================================
 
         if (
-          [
-            "approve",
-            "reject",
-          ].includes(
-            interaction.customId
-          )
+          interaction.customId ===
+          "approve"
         ) {
-          if (
-            !isStaff(interaction)
-          ) {
-            return interaction.reply({
+
+          if (!isStaff(interaction)) {
+
+            await interaction.reply({
+
               content:
-                "❌ هذا الزر لرتبة الإدارة المحددة فقط.",
+                "❌ هذا الزر للإدارة فقط.",
+
               ephemeral: true,
+
             });
+
+            return;
           }
 
-          const productId =
-            interaction.channel.topic
-              ?.match(
-                /product:([^;]+)/
-              )?.[1];
+          // البحث عن رسالة الطلب
+          const messages =
+            await interaction.channel.messages.fetch({
+              limit: 50,
+            });
+
+          let productName = null;
+
+          for (
+            const [, message]
+            of messages
+          ) {
+
+            for (
+              const embed
+              of message.embeds
+            ) {
+
+              if (
+                embed.title ===
+                  "🧾 طلب جديد" &&
+                embed.description
+              ) {
+
+                const match =
+                  embed.description.match(
+                    /\*\*📦 المنتج:\*\* (.+)/
+                  );
+
+                if (match) {
+                  productName =
+                    match[1].trim();
+                }
+
+              }
+
+            }
+
+          }
+
+          if (!productName) {
+
+            await interaction.reply({
+
+              content:
+                "❌ لم أستطع معرفة المنتج من الطلب.",
+
+              ephemeral: true,
+
+            });
+
+            return;
+          }
 
           const products =
             getProducts();
 
           const product =
             products.find(
-              p =>
-                p.id ===
-                productId
+              item =>
+                item.name ===
+                productName
             );
 
-          if (
-            interaction.customId ===
-            "approve"
-          ) {
-            if (!product) {
-              return interaction.reply({
-                content:
-                  "❌ لم أجد المنتج المرتبط بالطلب.",
-                ephemeral: true,
-              });
-            }
+          if (!product) {
 
-            if (
-              Number(
-                product.stock
-              ) <= 0
-            ) {
-              return interaction.reply({
-                content:
-                  "❌ المخزون أصبح 0.",
-                ephemeral: true,
-              });
-            }
+            await interaction.reply({
 
-            product.stock =
-              Number(
-                product.stock
-              ) - 1;
-
-            saveProducts(
-              products
-            );
-
-            const stats =
-              getStats();
-
-            stats.sales++;
-            stats.revenue +=
-              Number(
-                product.price
-              );
-
-            saveStats(stats);
-
-            await interaction.channel.send(
-              {
-                embeds: [
-                  new EmbedBuilder()
-                    .setTitle(
-                      "✅ تم تأكيد الدفع"
-                    )
-                    .setDescription(
-                      `**المنتج:** ${product.name}\n` +
-                      `**المبلغ:** ${product.price} ريال\n` +
-                      `**بواسطة:** <@${interaction.user.id}>\n` +
-                      `**المخزون المتبقي:** ${product.stock}`
-                    ),
-                ],
-              }
-            );
-
-            return interaction.reply({
               content:
-                "✅ تم تأكيد الدفع وخصم المنتج من المخزون.",
+                "❌ المنتج غير موجود في قاعدة البيانات.",
+
               ephemeral: true,
+
             });
+
+            return;
           }
 
-          await interaction.channel.send(
-            {
-              embeds: [
-                new EmbedBuilder()
-                  .setTitle(
-                    "❌ تم رفض إثبات الدفع"
-                  )
-                  .setDescription(
-                    `**بواسطة:** <@${interaction.user.id}>`
-                  ),
-              ],
-            }
-          );
+          // ==============================================
+          // CHECK STOCK
+          // ==============================================
 
-          return interaction.reply({
+          if (
+            Number(product.stock) <= 0
+          ) {
+
+            await interaction.reply({
+
+              content:
+                "❌ لا يمكن تأكيد الطلب، المنتج نفد من المخزون.",
+
+              ephemeral: true,
+
+            });
+
+            return;
+          }
+
+          // ==============================================
+          // REMOVE STOCK
+          // ==============================================
+
+          product.stock =
+            Number(product.stock) - 1;
+
+          saveProducts(products);
+
+          // ==============================================
+          // APPROVED MESSAGE
+          // ==============================================
+
+          const approvedEmbed =
+            new EmbedBuilder()
+              .setTitle(
+                "✅ تم تأكيد الدفع"
+              )
+              .setDescription(
+
+                `**🟢 الحالة:** تم تأكيد الدفع\n` +
+                `**📦 المنتج:** ${product.name}\n` +
+                `**💰 السعر:** ${product.price} ريال\n` +
+                `**👮 بواسطة:** <@${interaction.user.id}>\n` +
+                `**📊 المخزون المتبقي:** ${product.stock}`
+
+              )
+              .setFooter({
+                text:
+                  "Soork Store",
+              });
+
+          await interaction.channel.send({
+
+            embeds: [
+              approvedEmbed,
+            ],
+
+          });
+
+          await interaction.reply({
+
+            content:
+              "✅ تم تأكيد الدفع وخصم المنتج من المخزون.",
+
+            ephemeral: true,
+
+          });
+
+          return;
+        }
+
+        // ================================================
+        // REJECT
+        // ================================================
+
+        if (
+          interaction.customId ===
+          "reject"
+        ) {
+
+          if (!isStaff(interaction)) {
+
+            await interaction.reply({
+
+              content:
+                "❌ هذا الزر للإدارة فقط.",
+
+              ephemeral: true,
+
+            });
+
+            return;
+          }
+
+          const rejectedEmbed =
+            new EmbedBuilder()
+              .setTitle(
+                "❌ تم رفض إثبات الدفع"
+              )
+              .setDescription(
+
+                `**🔴 الحالة:** تم رفض الإثبات\n` +
+                `**👮 بواسطة:** <@${interaction.user.id}>\n\n` +
+                "يرجى إرسال إثبات صحيح إذا كان لديك تحويل فعلي."
+
+              )
+              .setFooter({
+                text:
+                  "Soork Store",
+              });
+
+          await interaction.channel.send({
+
+            embeds: [
+              rejectedEmbed,
+            ],
+
+          });
+
+          await interaction.reply({
+
             content:
               "❌ تم رفض إثبات الدفع.",
+
             ephemeral: true,
+
           });
+
+          return;
         }
 
-        // CLOSE ORDER
+        // ================================================
+        // CLOSE
+        // ================================================
 
         if (
           interaction.customId ===
-          "close_order"
+          "close"
         ) {
-          const isOwner =
-            interaction.channel.topic ===
-            `order-owner:${interaction.user.id}`;
 
-          if (
-            !isStaff(interaction) &&
-            !isOwner
-          ) {
-            return interaction.reply({
+          if (!isStaff(interaction)) {
+
+            await interaction.reply({
+
               content:
-                "❌ ليس لديك صلاحية إغلاق الطلب.",
+                "❌ هذا الزر للإدارة فقط.",
+
               ephemeral: true,
+
             });
-          }
 
-          await interaction.reply(
-            "🔒 سيتم إغلاق الطلب خلال 5 ثوانٍ."
-          );
-
-          return setTimeout(
-            () =>
-              interaction.channel
-                .delete()
-                .catch(() => {}),
-            5000
-          );
-        }
-
-        // CLOSE TICKET
-
-        if (
-          interaction.customId ===
-          "ticket_close"
-        ) {
-          const config =
-            getConfig();
-
-          if (
-            !isStaff(interaction) &&
-            interaction.channel.topic !==
-              `ticket-owner:${interaction.user.id}`
-          ) {
-            return interaction.reply({
-              content:
-                "❌ ليس لديك صلاحية إغلاق التكت.",
-              ephemeral: true,
-            });
+            return;
           }
 
           await interaction.reply(
             "🔒 سيتم إغلاق التكت خلال 5 ثوانٍ."
           );
 
-          if (
-            config.ticketLogChannelId
-          ) {
-            const log =
-              interaction.guild.channels.cache.get(
-                config.ticketLogChannelId
-              );
+          setTimeout(() => {
 
-            if (
-              log?.isTextBased()
-            ) {
-              await log.send({
-                content:
-                  `🧾 تم إغلاق التكت **${interaction.channel.name}**\n` +
-                  `👤 بواسطة: <@${interaction.user.id}>`,
-              }).catch(() => {});
-            }
-          }
+            interaction.channel
+              .delete()
+              .catch(() => {});
 
-          return setTimeout(
-            () =>
-              interaction.channel
-                .delete()
-                .catch(() => {}),
-            5000
-          );
+          }, 5000);
+
+          return;
         }
 
-        // ADD / REMOVE MEMBER
-
-        if (
-          [
-            "ticket_add",
-            "ticket_remove",
-          ].includes(
-            interaction.customId
-          )
-        ) {
-          if (
-            !isStaff(interaction)
-          ) {
-            return interaction.reply({
-              content:
-                "❌ هذا الزر للإدارة فقط.",
-              ephemeral: true,
-            });
-          }
-
-          return interaction.reply({
-            content:
-              "👤 استخدم منشن العضو في التكت، وسأضيف لك نظام اختيار العضو في النسخة التالية.",
-            ephemeral: true,
-          });
-        }
       }
+
     } catch (error) {
+
       console.error(
         "❌ Interaction error:",
         error
@@ -1808,21 +1310,26 @@ client.on(
         !interaction.replied &&
         !interaction.deferred
       ) {
-        await interaction
-          .reply({
-            content:
-              "❌ حدث خطأ غير متوقع.",
-            ephemeral: true,
-          })
-          .catch(() => {});
+
+        await interaction.reply({
+
+          content:
+            "❌ حدث خطأ غير متوقع.",
+
+          ephemeral: true,
+
+        }).catch(() => {});
+
       }
+
     }
+
   }
 );
 
-// =========================
-// Login
-// =========================
+// ======================================================
+// LOGIN
+// ======================================================
 
 client.login(
   env.DISCORD_TOKEN
