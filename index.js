@@ -13,7 +13,9 @@ if(!env.DISCORD_TOKEN || !env.GUILD_ID) {
   console.error("ضع DISCORD_TOKEN و GUILD_ID في .env");
   process.exit(1);
 }
-const dataDir=path.join(__dirname,"..","data");
+const dataDir=path.join(__dirname,"data");
+if(!fs.existsSync(dataDir)) fs.mkdirSync(dataDir,{recursive:true});
+
 const productsFile=path.join(dataDir,"products.json");
 if(!fs.existsSync(productsFile)) fs.writeFileSync(productsFile,"[]");
 
