@@ -1,0 +1,8 @@
+{
+  "name": "soork-store-bot",
+  "version": "2.0.0",
+  "description": "Soork Store Discord bot with Al Rajhi transfer proof workflow",
+  "main": "src/index.js",
+  "scripts": {"start": "node src/index.js"},
+  "dependencies": {"discord.js": "^14.21.0", "dotenv": "^17.2.1"}
+}
