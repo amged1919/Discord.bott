@@ -39,7 +39,6 @@ if (!env.DISCORD_TOKEN || !env.GUILD_ID) {
   console.error(
     "❌ ضع DISCORD_TOKEN و GUILD_ID في Railway Variables"
   );
-
   process.exit(1);
 }
 
@@ -55,8 +54,12 @@ if (!fs.existsSync(dataDir)) {
   });
 }
 
-const productsFile =
-  path.join(dataDir, "products.json");
+// ---------------- PRODUCTS ----------------
+
+const productsFile = path.join(
+  dataDir,
+  "products.json"
+);
 
 if (!fs.existsSync(productsFile)) {
   fs.writeFileSync(
@@ -84,6 +87,46 @@ function saveProducts(products) {
     productsFile,
     JSON.stringify(
       products,
+      null,
+      2
+    ),
+    "utf8"
+  );
+}
+
+// ---------------- 24/7 ----------------
+
+const voice247File = path.join(
+  dataDir,
+  "247.json"
+);
+
+if (!fs.existsSync(voice247File)) {
+  fs.writeFileSync(
+    voice247File,
+    "{}",
+    "utf8"
+  );
+}
+
+function get247() {
+  try {
+    return JSON.parse(
+      fs.readFileSync(
+        voice247File,
+        "utf8"
+      )
+    );
+  } catch {
+    return {};
+  }
+}
+
+function save247(data) {
+  fs.writeFileSync(
+    voice247File,
+    JSON.stringify(
+      data,
       null,
       2
     ),
@@ -173,10 +216,12 @@ async function playNext(guild) {
     stream.stream.on(
       "error",
       () => {
+
         queue.songs.shift();
 
         playNext(guild)
           .catch(console.error);
+
       }
     );
 
@@ -190,11 +235,136 @@ async function playNext(guild) {
     queue.songs.shift();
 
     if (queue.songs.length) {
+
       playNext(guild)
         .catch(console.error);
+
     } else {
+
       queue.playing = false;
+
     }
+
+  }
+}
+
+// ==================================================
+// 24/7 VOICE SYSTEM
+// ==================================================
+
+async function connect247(guild) {
+
+  const data = get247();
+
+  const channelId =
+    data[guild.id];
+
+  if (!channelId) {
+    return false;
+  }
+
+  const channel =
+    guild.channels.cache.get(
+      channelId
+    );
+
+  if (
+    !channel ||
+    channel.type !==
+      ChannelType.GuildVoice
+  ) {
+
+    console.log(
+      `⚠️ روم 24/7 غير موجود في ${guild.name}`
+    );
+
+    return false;
+  }
+
+  try {
+
+    const queue =
+      getQueue(
+        guild.id
+      );
+
+    if (
+      queue.connection
+    ) {
+
+      try {
+        queue.connection.destroy();
+      } catch {}
+
+      queue.connection =
+        null;
+    }
+
+    const connection =
+      joinVoiceChannel({
+
+        channelId:
+          channel.id,
+
+        guildId:
+          guild.id,
+
+        adapterCreator:
+          guild.voiceAdapterCreator,
+
+        selfDeaf:
+          true,
+
+        selfMute:
+          true,
+
+      });
+
+    queue.connection =
+      connection;
+
+    connection.on(
+      "stateChange",
+      (oldState, newState) => {
+
+        if (
+          newState.status ===
+          "disconnected"
+        ) {
+
+          console.log(
+            `🔄 محاولة إعادة الاتصال بـ ${channel.name}`
+          );
+
+          setTimeout(() => {
+
+            connect247(
+              guild
+            ).catch(
+              console.error
+            );
+
+          }, 5000);
+
+        }
+
+      }
+    );
+
+    console.log(
+      `🔊 24/7 متصل في ${guild.name} / ${channel.name}`
+    );
+
+    return true;
+
+  } catch (error) {
+
+    console.error(
+      "❌ خطأ 24/7:",
+      error
+    );
+
+    return false;
   }
 }
 
@@ -214,6 +384,7 @@ function isStaff(interaction) {
       PermissionFlagsBits.ManageGuild
     )
   ) {
+
     return true;
   }
 
@@ -224,6 +395,7 @@ function isStaff(interaction) {
       env.STAFF_ROLE_ID
     )
   ) {
+
     return true;
   }
 
@@ -518,6 +690,28 @@ const commands = [
       "عرض قائمة الأغاني"
     ),
 
+  // ==================================================
+  // 24/7
+  // ==================================================
+
+  new SlashCommandBuilder()
+    .setName("247")
+    .setDescription(
+      "إبقاء البوت في الروم الصوتي 24/7"
+    )
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageGuild
+    ),
+
+  new SlashCommandBuilder()
+    .setName("247off")
+    .setDescription(
+      "إيقاف وضع 24/7"
+    )
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageGuild
+    ),
+
 ].map(command =>
   command.toJSON()
 );
@@ -538,6 +732,7 @@ function storeEmbed() {
     )
 
     .setDescription(
+
       "اختر المنتج من القائمة لفتح طلب خاص.\n\n" +
 
       "💳 بعد فتح الطلب ستظهر بيانات تحويل الراجحي.\n" +
@@ -545,6 +740,7 @@ function storeEmbed() {
       "📤 بعد التحويل ارفع إثبات الدفع.\n" +
 
       "✅ الإدارة تؤكد الدفع بعد مراجعة الإثبات."
+
     )
 
     .setFooter({
@@ -579,38 +775,47 @@ function productMenu() {
   if (!products.length) {
 
     menu.addOptions({
+
       label:
         "لا توجد منتجات متوفرة",
 
       value:
         "none",
+
     });
 
   } else {
 
     menu.addOptions(
-      products.map(product => ({
-        label:
-          `${product.name} - ${product.price} ريال`
-            .slice(0, 100),
 
-        description:
-          String(
-            product.description ||
-            "بدون وصف"
-          ).slice(0, 100),
+      products.map(
+        product => ({
 
-        value:
-          product.id,
-      }))
+          label:
+            `${product.name} - ${product.price} ريال`
+              .slice(0, 100),
+
+          description:
+            String(
+              product.description ||
+              "بدون وصف"
+            ).slice(0, 100),
+
+          value:
+            product.id,
+
+        })
+      )
+
     );
+
   }
 
   return menu;
 }
 
 // ==================================================
-// PAYMENT EMBED
+// PAYMENT
 // ==================================================
 
 function paymentEmbed(product) {
@@ -643,6 +848,7 @@ function paymentEmbed(product) {
       "📤 بعد التحويل ارفع صورة إثبات الدفع داخل الطلب.\n\n" +
 
       "⚠️ لا يتم اعتبار الطلب مدفوعًا حتى يتم تأكيده من الإدارة."
+
     );
 }
 
@@ -803,6 +1009,50 @@ client.once(
 
     }
 
+    // ==================================================
+    // RESTORE 24/7
+    // ==================================================
+
+    try {
+
+      const data =
+        get247();
+
+      const guild =
+        client.guilds.cache.get(
+          env.GUILD_ID
+        );
+
+      if (
+        guild &&
+        data[guild.id]
+      ) {
+
+        console.log(
+          "🔄 استعادة اتصال 24/7..."
+        );
+
+        setTimeout(() => {
+
+          connect247(
+            guild
+          ).catch(
+            console.error
+          );
+
+        }, 3000);
+
+      }
+
+    } catch (error) {
+
+      console.error(
+        "❌ خطأ استعادة 24/7:",
+        error
+      );
+
+    }
+
   }
 );
 
@@ -840,15 +1090,19 @@ client.on(
             interaction.commandName ===
               "setup" &&
 
-            !isStaff(interaction)
+            !isStaff(
+              interaction
+            )
           ) {
 
             return interaction.reply({
+
               content:
                 "❌ هذا الأمر للإدارة فقط.",
 
               ephemeral:
                 true,
+
             });
 
           }
@@ -887,18 +1141,21 @@ client.on(
           if (!products.length) {
 
             return interaction.reply({
+
               content:
                 "📦 لا توجد منتجات.",
 
               ephemeral:
                 true,
+
             });
 
           }
 
           const text =
-            products
-              .map(p =>
+            products.map(
+              p =>
+
                 `📦 **${p.name}**\n` +
 
                 `🆔 \`${p.id}\`\n` +
@@ -911,16 +1168,22 @@ client.on(
                   p.description ||
                   "بدون وصف"
                 }`
-              )
-              .join("\n\n");
+
+            ).join(
+              "\n\n"
+            );
 
           return interaction.reply({
 
             content:
-              text.slice(0, 4000),
+              text.slice(
+                0,
+                4000
+              ),
 
             ephemeral:
               true,
+
           });
 
         }
@@ -934,36 +1197,48 @@ client.on(
           "addproduct"
         ) {
 
-          if (!isStaff(interaction)) {
+          if (
+            !isStaff(
+              interaction
+            )
+          ) {
 
             return interaction.reply({
+
               content:
                 "❌ للإدارة فقط.",
 
               ephemeral:
                 true,
+
             });
 
           }
 
           const name =
             interaction.options
-              .getString("name");
+              .getString(
+                "name"
+              );
 
           const price =
             interaction.options
-              .getNumber("price");
+              .getNumber(
+                "price"
+              );
 
           const stock =
             interaction.options
-              .getInteger("stock");
+              .getInteger(
+                "stock"
+              );
 
           const description =
             interaction.options
               .getString(
                 "description"
               ) ||
-              "بدون وصف";
+            "بدون وصف";
 
           const products =
             getProducts();
@@ -976,7 +1251,10 @@ client.on(
 
               Math.random()
                 .toString(36)
-                .substring(2, 6),
+                .substring(
+                  2,
+                  6
+                ),
 
             name:
               name,
@@ -1016,6 +1294,7 @@ client.on(
 
             ephemeral:
               true,
+
           });
 
         }
@@ -1029,21 +1308,29 @@ client.on(
           "removeproduct"
         ) {
 
-          if (!isStaff(interaction)) {
+          if (
+            !isStaff(
+              interaction
+            )
+          ) {
 
             return interaction.reply({
+
               content:
                 "❌ للإدارة فقط.",
 
               ephemeral:
                 true,
+
             });
 
           }
 
           const id =
             interaction.options
-              .getString("id");
+              .getString(
+                "id"
+              );
 
           const products =
             getProducts();
@@ -1054,14 +1341,18 @@ client.on(
                 p.id === id
             );
 
-          if (index === -1) {
+          if (
+            index === -1
+          ) {
 
             return interaction.reply({
+
               content:
                 "❌ المنتج غير موجود.",
 
               ephemeral:
                 true,
+
             });
 
           }
@@ -1083,6 +1374,7 @@ client.on(
 
             ephemeral:
               true,
+
           });
 
         }
@@ -1096,21 +1388,29 @@ client.on(
           "editproduct"
         ) {
 
-          if (!isStaff(interaction)) {
+          if (
+            !isStaff(
+              interaction
+            )
+          ) {
 
             return interaction.reply({
+
               content:
                 "❌ للإدارة فقط.",
 
               ephemeral:
                 true,
+
             });
 
           }
 
           const id =
             interaction.options
-              .getString("id");
+              .getString(
+                "id"
+              );
 
           const products =
             getProducts();
@@ -1124,26 +1424,34 @@ client.on(
           if (!product) {
 
             return interaction.reply({
+
               content:
                 "❌ المنتج غير موجود.",
 
               ephemeral:
                 true,
+
             });
 
           }
 
           const name =
             interaction.options
-              .getString("name");
+              .getString(
+                "name"
+              );
 
           const price =
             interaction.options
-              .getNumber("price");
+              .getNumber(
+                "price"
+              );
 
           const stock =
             interaction.options
-              .getInteger("stock");
+              .getInteger(
+                "stock"
+              );
 
           const description =
             interaction.options
@@ -1154,29 +1462,37 @@ client.on(
           if (
             name !== null
           ) {
+
             product.name =
               name;
+
           }
 
           if (
             price !== null
           ) {
+
             product.price =
               price;
+
           }
 
           if (
             stock !== null
           ) {
+
             product.stock =
               stock;
+
           }
 
           if (
             description !== null
           ) {
+
             product.description =
               description;
+
           }
 
           saveProducts(
@@ -1197,6 +1513,7 @@ client.on(
 
             ephemeral:
               true,
+
           });
 
         }
@@ -1210,14 +1527,20 @@ client.on(
           "stock"
         ) {
 
-          if (!isStaff(interaction)) {
+          if (
+            !isStaff(
+              interaction
+            )
+          ) {
 
             return interaction.reply({
+
               content:
                 "❌ للإدارة فقط.",
 
               ephemeral:
                 true,
+
             });
 
           }
@@ -1228,25 +1551,28 @@ client.on(
           if (!products.length) {
 
             return interaction.reply({
+
               content:
                 "📦 لا توجد منتجات.",
 
               ephemeral:
                 true,
+
             });
 
           }
 
           const text =
-            products
-              .map(p =>
+            products.map(
+              p =>
 
                 `📦 **${p.name}** — ${p.stock} قطعة\n` +
 
                 `🆔 \`${p.id}\``
 
-              )
-              .join("\n\n");
+            ).join(
+              "\n\n"
+            );
 
           return interaction.reply({
 
@@ -1255,6 +1581,7 @@ client.on(
 
             ephemeral:
               true,
+
           });
 
         }
@@ -1293,7 +1620,7 @@ client.on(
         }
 
         // ==================================================
-        // CLOSE COMMAND
+        // CLOSE TICKET
         // ==================================================
 
         if (
@@ -1310,11 +1637,13 @@ client.on(
           ) {
 
             return interaction.reply({
+
               content:
                 "❌ هذا الأمر يستخدم داخل التكت فقط.",
 
               ephemeral:
                 true,
+
             });
 
           }
@@ -1341,11 +1670,13 @@ client.on(
           ) {
 
             return interaction.reply({
+
               content:
                 "❌ ما تقدر تقفل هذا التكت.",
 
               ephemeral:
                 true,
+
             });
 
           }
@@ -1363,13 +1694,16 @@ client.on(
 
               interaction.channel
                 .delete()
-                .catch(() => {});
+                .catch(
+                  () => {}
+                );
 
             }
 
           }, 5000);
 
           return;
+
         }
 
         // ==================================================
@@ -1388,32 +1722,41 @@ client.on(
           ) {
 
             return interaction.reply({
+
               content:
                 "❌ ما عندك صلاحية الحظر.",
 
               ephemeral:
                 true,
+
             });
 
           }
 
           const user =
             interaction.options
-              .getUser("user");
+              .getUser(
+                "user"
+              );
 
           const reason =
             interaction.options
-              .getString("reason") ||
+              .getString(
+                "reason"
+              ) ||
             "بدون سبب";
 
           try {
 
             await interaction.guild.members.ban(
+
               user.id,
+
               {
                 reason:
                   reason,
               }
+
             );
 
             return interaction.reply(
@@ -1423,11 +1766,13 @@ client.on(
           } catch {
 
             return interaction.reply({
+
               content:
                 "❌ ما قدرت أحظر العضو. تأكد من ترتيب الرتب والصلاحيات.",
 
               ephemeral:
                 true,
+
             });
 
           }
@@ -1450,37 +1795,49 @@ client.on(
           ) {
 
             return interaction.reply({
+
               content:
                 "❌ ما عندك صلاحية الطرد.",
 
               ephemeral:
                 true,
+
             });
 
           }
 
           const user =
             interaction.options
-              .getUser("user");
+              .getUser(
+                "user"
+              );
 
           const reason =
             interaction.options
-              .getString("reason") ||
+              .getString(
+                "reason"
+              ) ||
             "بدون سبب";
 
           const member =
             await interaction.guild.members
-              .fetch(user.id)
-              .catch(() => null);
+              .fetch(
+                user.id
+              )
+              .catch(
+                () => null
+              );
 
           if (!member) {
 
             return interaction.reply({
+
               content:
                 "❌ العضو غير موجود في السيرفر.",
 
               ephemeral:
                 true,
+
             });
 
           }
@@ -1498,11 +1855,13 @@ client.on(
           } catch {
 
             return interaction.reply({
+
               content:
                 "❌ ما قدرت أطرد العضو.",
 
               ephemeral:
                 true,
+
             });
 
           }
@@ -1524,18 +1883,22 @@ client.on(
           if (!voiceChannel) {
 
             return interaction.reply({
+
               content:
                 "❌ ادخل روم صوتي أولاً.",
 
               ephemeral:
                 true,
+
             });
 
           }
 
           const query =
             interaction.options
-              .getString("song");
+              .getString(
+                "song"
+              );
 
           await interaction.deferReply();
 
@@ -1565,7 +1928,8 @@ client.on(
                 await play.search(
                   query,
                   {
-                    limit: 1,
+                    limit:
+                      1,
 
                     source: {
                       youtube:
@@ -1617,6 +1981,12 @@ client.on(
                   adapterCreator:
                     interaction.guild
                       .voiceAdapterCreator,
+
+                  selfDeaf:
+                    true,
+
+                  selfMute:
+                    true,
 
                 });
 
@@ -1755,7 +2125,8 @@ client.on(
 
           }
 
-          queue.songs = [];
+          queue.songs =
+            [];
 
           queue.player.stop();
 
@@ -1763,8 +2134,7 @@ client.on(
             queue.connection
           ) {
 
-            queue.connection
-              .destroy();
+            queue.connection.destroy();
 
             queue.connection =
               null;
@@ -1868,14 +2238,199 @@ client.on(
           const text =
             queue.songs
               .map(
-                (song, index) =>
+                (
+                  song,
+                  index
+                ) =>
                   `${index + 1}. ${song.title}`
               )
-              .join("\n");
+              .join(
+                "\n"
+              );
 
           return interaction.reply(
             `🎵 **قائمة الأغاني**\n\n${text}`
           );
+
+        }
+
+        // ==================================================
+        // 247
+        // ==================================================
+
+        if (
+          interaction.commandName ===
+          "247"
+        ) {
+
+          if (
+            !isStaff(
+              interaction
+            )
+          ) {
+
+            return interaction.reply({
+
+              content:
+                "❌ هذا الأمر للإدارة فقط.",
+
+              ephemeral:
+                true,
+
+            });
+
+          }
+
+          const voiceChannel =
+            interaction.member.voice.channel;
+
+          if (!voiceChannel) {
+
+            return interaction.reply({
+
+              content:
+                "❌ ادخل الروم الصوتي أولاً.",
+
+              ephemeral:
+                true,
+
+            });
+
+          }
+
+          if (
+            voiceChannel.type !==
+            ChannelType.GuildVoice
+          ) {
+
+            return interaction.reply({
+
+              content:
+                "❌ هذا ليس روم صوتي.",
+
+              ephemeral:
+                true,
+
+            });
+
+          }
+
+          const data =
+            get247();
+
+          data[
+            interaction.guild.id
+          ] =
+            voiceChannel.id;
+
+          save247(
+            data
+          );
+
+          const connected =
+            await connect247(
+              interaction.guild
+            );
+
+          if (!connected) {
+
+            return interaction.reply({
+
+              content:
+                "❌ ما قدرت أدخل الروم الصوتي.",
+
+              ephemeral:
+                true,
+
+            });
+
+          }
+
+          return interaction.reply({
+
+            content:
+
+              `🔊 تم تشغيل وضع **24/7**.\n\n` +
+
+              `📍 الروم: **${voiceChannel.name}**\n` +
+
+              `♾️ سيبقى البوت في الروم حتى تستخدم \`/247off\`.`,
+
+            ephemeral:
+              true,
+
+          });
+
+        }
+
+        // ==================================================
+        // 247 OFF
+        // ==================================================
+
+        if (
+          interaction.commandName ===
+          "247off"
+        ) {
+
+          if (
+            !isStaff(
+              interaction
+            )
+          ) {
+
+            return interaction.reply({
+
+              content:
+                "❌ هذا الأمر للإدارة فقط.",
+
+              ephemeral:
+                true,
+
+            });
+
+          }
+
+          const data =
+            get247();
+
+          delete data[
+            interaction.guild.id
+          ];
+
+          save247(
+            data
+          );
+
+          const queue =
+            musicQueues.get(
+              interaction.guild.id
+            );
+
+          if (
+            queue &&
+            queue.connection
+          ) {
+
+            try {
+
+              queue.connection.destroy();
+
+            } catch {}
+
+            queue.connection =
+              null;
+
+          }
+
+          return interaction.reply({
+
+            content:
+              "🔇 تم إيقاف وضع **24/7** وإخراج البوت من الروم.",
+
+            ephemeral:
+              true,
+
+          });
 
         }
 
@@ -1901,11 +2456,13 @@ client.on(
         ) {
 
           return interaction.reply({
+
             content:
               "❌ لا توجد منتجات.",
 
             ephemeral:
               true,
+
           });
 
         }
@@ -1923,25 +2480,30 @@ client.on(
         if (!product) {
 
           return interaction.reply({
+
             content:
               "❌ المنتج غير موجود.",
 
             ephemeral:
               true,
+
           });
 
         }
 
         if (
-          Number(product.stock) <= 0
+          Number(product.stock) <=
+          0
         ) {
 
           return interaction.reply({
+
             content:
               "❌ المنتج نفد من المخزون.",
 
             ephemeral:
               true,
+
           });
 
         }
@@ -1958,17 +2520,21 @@ client.on(
               /[^a-z0-9-_]/g,
               ""
             )
-            .slice(0, 18) ||
+            .slice(
+              0,
+              18
+            ) ||
           "customer";
 
         const channelName =
           `order-${username}-${Date.now()
             .toString()
-            .slice(-4)}`;
+            .slice(
+              -4
+            )}`;
 
         const overwrites = [
 
-          // Everyone
           {
             id:
               interaction.guild
@@ -1977,9 +2543,9 @@ client.on(
             deny: [
               PermissionFlagsBits.ViewChannel,
             ],
+
           },
 
-          // Customer
           {
             id:
               interaction.user.id,
@@ -1990,11 +2556,11 @@ client.on(
               PermissionFlagsBits.ReadMessageHistory,
               PermissionFlagsBits.AttachFiles,
             ],
+
           },
 
         ];
 
-        // Staff
         if (
           env.STAFF_ROLE_ID
         ) {
@@ -2150,7 +2716,10 @@ client.on(
 
           const messages =
             await interaction.channel.messages.fetch({
-              limit: 20,
+
+              limit:
+                20,
+
             });
 
           let productName =
@@ -2179,7 +2748,9 @@ client.on(
                     /\*\*المنتج:\*\* (.+)/
                   );
 
-                if (match) {
+                if (
+                  match
+                ) {
 
                   productName =
                     match[1].trim();
@@ -2334,9 +2905,7 @@ client.on(
                 )
 
                 .setDescription(
-
                   `تم رفض الإثبات بواسطة <@${interaction.user.id}>`
-
                 ),
 
             ],
@@ -2439,7 +3008,6 @@ client.on(
 
           const overwrites = [
 
-            // Everyone
             {
               id:
                 interaction.guild
@@ -2451,7 +3019,6 @@ client.on(
 
             },
 
-            // Ticket owner
             {
               id:
                 interaction.user.id,
@@ -2467,7 +3034,6 @@ client.on(
 
           ];
 
-          // Staff
           if (
             env.STAFF_ROLE_ID
           ) {
@@ -2566,7 +3132,7 @@ client.on(
         }
 
         // ==================================================
-        // CLOSE TICKET BUTTON
+        // CLOSE TICKET
         // ==================================================
 
         if (
